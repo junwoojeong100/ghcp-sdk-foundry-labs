@@ -1,0 +1,37 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Azure/azure-dev/main/schemas/v1.0/azure.yaml.json
+
+requiredVersions:
+    extensions:
+        azure.ai.agents: '>=1.0.0-beta.4'
+name: copilot-workflow-hosted-lab
+services:
+    ai-project:
+        host: azure.ai.project
+    copilot-workflow-hosted:
+        project: src/copilot-workflow-hosted
+        host: azure.ai.agent
+        language: python
+        uses:
+            - ai-project
+        codeConfiguration:
+            dependencyResolution: remote_build
+            entryPoint: main.py
+            runtime: python_3_13
+        container:
+            resources:
+                cpu: "1"
+                memory: 2Gi
+        description: A GitHub Copilot SDK agent and sequential workflow using Claude Opus 5.
+        displayName: Copilot Workflow Hosted Lab
+        environmentVariables:
+            - name: GITHUB_TOKEN
+              value: ${GITHUB_TOKEN}
+            - name: COPILOT_MODEL
+              value: ${COPILOT_MODEL}
+        kind: hosted
+        name: copilot-workflow-hosted
+        protocols:
+            - protocol: invocations
+              version: 2.0.0
+infra:
+    provider: microsoft.foundry

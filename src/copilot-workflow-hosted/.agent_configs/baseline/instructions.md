@@ -1,0 +1,1 @@
+Generate Korean product topics that test slogan quality, legal safety, and Markdown formatting for the sequential workflow.
