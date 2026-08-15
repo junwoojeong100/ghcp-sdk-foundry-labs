@@ -1,8 +1,7 @@
 # GitHub Copilot SDK + Microsoft Foundry Hosted Agent 실습
 
-이 실습은 Microsoft Agent Framework에서 만들 수 있는 **단일 Agent**와
-**Sequential multi-agent workflow**를 GitHub Copilot SDK로 구현하고,
-Microsoft Foundry에 **Hosted Agent**로 배포하는 과정을 다룹니다.
+GitHub Copilot SDK로 일반 업무용 Agent와 순차 워크플로를 만들고,
+Microsoft Foundry에 Hosted Agent로 배포하는 실습입니다.
 
 사용 모델은 GitHub Copilot이 제공하는 **Claude Opus 5**이며, SDK 모델 ID는
 `claude-opus-5`입니다.
@@ -11,6 +10,84 @@ Microsoft Foundry에 **Hosted Agent**로 배포하는 과정을 다룹니다.
 > Foundry는 Agent 코드를 호스팅하고, Agent 내부의 GitHub Copilot SDK가
 > GitHub 인증을 사용해 Claude Opus 5를 호출합니다. 모델 사용량과 접근 정책도
 > Azure 모델 배포가 아니라 GitHub Copilot 구독 및 조직 정책을 따릅니다.
+
+한국 Foundry Marketplace에서 Claude 모델을 직접 사용할 수 없는 상황의
+대안으로 검토한다면 [Copilot SDK 기반 Claude 대안 검토](docs/copilot-sdk-claude-alternative.md)를
+먼저 읽으세요. 이 실습이 증명하는 범위와 production 적용 시 필요한 조건을
+정리했습니다.
+
+| 목적 | 읽을 문서 |
+|---|---|
+| 직접 실행하고 배포하기 | 이 `README.md` |
+| 고객 적용 가능성과 제약 판단하기 | [Copilot SDK 기반 Claude 대안 검토](docs/copilot-sdk-claude-alternative.md) |
+
+## 한눈에 보기
+
+| 질문 | 답변 |
+|---|---|
+| Foundry에 Claude를 배포하는가? | 아니요 |
+| Claude는 어디서 호출하는가? | GitHub Copilot SDK |
+| Foundry의 역할은 무엇인가? | Agent 코드 호스팅, endpoint, 버전, 실행 환경 |
+| 예제 Agent는 무엇을 하는가? | AI 솔루션 아키텍트 역할의 질의응답 |
+| 예제 워크플로는 무엇을 하는가? | 슬로건 작성 → 법률 검토 → 최종 포맷팅 |
+| 한국 리전에서 Claude가 실행되는가? | 보장되지 않음 |
+| 권장 용도는 무엇인가? | PoC와 Copilot 라이선스를 가진 고객사의 내부 업무 |
+
+이 프로젝트는 **Foundry의 Claude 모델 endpoint 대체재**가 아니라,
+**Foundry Hosted Agent 안에서 Copilot의 Claude를 사용하는 기술 경로**를
+보여줍니다.
+
+## 검증 상태
+
+이 리포의 Agent는 2026-08-15에 다음 항목을 실제 확인했습니다.
+
+- Microsoft Foundry Hosted Agent 직접 코드 배포
+- Hosted Agent 버전 `active` 상태 확인
+- GitHub Copilot의 `claude-opus-5` 모델 호출
+- Writer → Legal reviewer → Formatter 원격 워크플로 완료
+
+[Playwright 데모 녹화 보기](foundry-hosted-agent-demo.webm)
+
+## 가장 빠른 실행
+
+다음 명령은 새 Foundry 프로젝트를 만들고 Agent를 배포합니다.
+
+```bash
+# 1. 도구와 로그인 확인
+azd version
+azd extension install microsoft.foundry
+az login
+azd auth login
+
+# 2. azd 환경 생성
+azd env new dev
+azd env set AZURE_SUBSCRIPTION_ID "$(az account show --query id -o tsv)"
+azd env set AZURE_LOCATION "northcentralus"
+azd env set COPILOT_MODEL "claude-opus-5"
+
+# 3. Copilot Requests: Read-only 권한의 fine-grained PAT 설정
+read -s GITHUB_TOKEN
+azd env set GITHUB_TOKEN "$GITHUB_TOKEN"
+unset GITHUB_TOKEN
+
+# 4. Azure 리소스와 Hosted Agent 배포
+azd provision --no-state --no-prompt
+azd deploy --no-prompt
+
+# 5. 배포 확인과 원격 workflow 실행
+azd ai agent show copilot-workflow-hosted --output json
+azd ai agent invoke copilot-workflow-hosted \
+  --protocol invocations \
+  --input-file requests/workflow.json \
+  --new-session
+```
+
+성공하면 응답에 `"model":"claude-opus-5"`와
+`writer`, `legal_reviewer`, `formatter` 단계 결과가 표시됩니다.
+
+> 이 과정은 Azure 리소스 비용과 GitHub Copilot AI Credits를 사용할 수
+> 있습니다. 실습 리소스가 더 이상 필요하지 않으면 프로젝트 루트에서
+> `azd down`을 실행해 정리하세요.
 
 ## 1. 학습 목표
 
@@ -62,6 +139,9 @@ API가 없습니다. 대신 Copilot의 agent runtime을 각 단계에 사용하�
 ├── AGENTS.md
 ├── README.md
 ├── azure.yaml
+├── foundry-hosted-agent-demo.webm
+├── docs
+│   └── copilot-sdk-claude-alternative.md
 ├── requests
 │   ├── agent.json
 │   └── workflow.json
@@ -82,7 +162,7 @@ API가 없습니다. 대신 Copilot의 agent runtime을 각 단계에 사용하�
 
 1. Azure 구독
 2. Python 3.13
-3. Azure Developer CLI(`azd`) 1.27.1 이상
+3. Azure Developer CLI(`azd`) 1.31.1 이상
 4. `microsoft.foundry` azd extension
 5. GitHub Copilot 구독
 6. Claude Opus 5 사용이 허용된 개인 또는 조직 정책
@@ -90,7 +170,8 @@ API가 없습니다. 대신 Copilot의 agent runtime을 각 단계에 사용하�
 
 ```bash
 azd version
-azd ext install microsoft.foundry
+azd extension install microsoft.foundry
+az login
 azd auth login
 ```
 
@@ -113,7 +194,9 @@ GitHub Copilot CLI에서 `/model`을 실행해 **Claude Opus 5**가 표시되는
 GitHub의 fine-grained personal access token 생성 화면에서
 **Account permissions → Copilot Requests → Read-only**를 선택합니다.
 
-워크숍에서는 다음처럼 토큰을 현재 azd 환경에 저장합니다.
+워크숍에서는 다음처럼 토큰을 현재 azd 환경에 저장합니다. 이 방식은 PoC용입니다.
+운영 환경에서는 [대안 검토 문서](docs/copilot-sdk-claude-alternative.md)의
+사용자별 OAuth 또는 고객 소유 Copilot 조직 방식을 검토하세요.
 
 ```bash
 azd env new dev
@@ -278,17 +361,24 @@ azd ai agent monitor --follow
 
 ## 8. 평가 실습
 
-배포 후 간단한 평가 suite를 만들 수 있습니다.
+이 프로젝트는 Claude 추론을 Copilot에서 수행하므로 Foundry model deployment가
+없습니다. Foundry 평가 데이터 생성에는 별도의 **Foundry 평가 모델 배포**가
+필요합니다. 먼저 평가에 사용할 모델을 Foundry에 배포한 뒤 deployment name을
+지정하세요.
 
 ```bash
 azd ai agent eval generate \
   --gen-instruction "Generate topics that test slogan quality, legal safety, and formatting." \
+  --eval-model "<foundry-evaluation-model-deployment>" \
   --no-wait \
   --no-prompt
 
 azd ai agent eval run
 azd ai agent eval show -O results.json
 ```
+
+평가 모델 없이 `eval generate`를 실행하면
+`Missing model option parameters in request body` 오류가 발생합니다.
 
 평가 항목 예시는 다음과 같습니다.
 
@@ -333,8 +423,49 @@ Copilot SDK의 `@define_tool`로 읽기 전용 상품 카탈로그 조회 도구
 - `claude-opus-5` 접근 가능 여부는 Copilot plan 및 조직 정책에 따라 다릅니다.
 - Copilot 장애와 Foundry hosting 장애를 로그/metric에서 구분하세요.
 - 고비용 모델을 사용하는 workflow는 단계 수만큼 모델 호출이 증가합니다.
+- GitHub AI Credits가 충분해도 별도의 비공개 rate limit이 적용될 수 있습니다.
+- Claude 추론이 한국 Azure region에서 처리된다고 가정하지 마세요.
 
-## 11. 공식 참고 자료
+## 11. 자주 발생하는 문제
+
+### `403 ... agents/read`
+
+현재 `azd`와 Foundry extension을 먼저 업데이트하세요.
+
+```bash
+azd version
+azd extension install azure.ai.agents --force
+azd extension install microsoft.foundry --force
+```
+
+그 후 배포 사용자가 Foundry project 범위의 `Foundry User`,
+`Foundry Project Manager` 또는 `Foundry Owner` 역할을 갖는지 확인합니다.
+
+### 로컬 포트 8088이 이미 사용 중
+
+```bash
+azd ai agent run --no-client --port 8090
+azd ai agent invoke --local --port 8090 \
+  --protocol invocations \
+  --input-file requests/workflow.json
+```
+
+### `claude-opus-5`를 사용할 수 없음
+
+Copilot CLI의 `/model` 또는 SDK의 `list_models()`로 모델 가용성을 확인합니다.
+Business/Enterprise 조직에서는 관리자가 Claude Opus 5를 허용해야 합니다.
+
+### Python 패키지 다운로드 실패
+
+네트워크 오류가 일시적이면 venv에서 의존성을 먼저 설치한 뒤 다시 실행합니다.
+
+```bash
+cd src/copilot-workflow-hosted
+python -m pip install --retries 8 --timeout 60 -r requirements.txt
+cd ../..
+```
+
+## 12. 공식 참고 자료
 
 - [GitHub Copilot SDK](https://github.com/github/copilot-sdk)
 - [Copilot Python SDK](https://github.com/github/copilot-sdk/tree/main/python)
@@ -343,4 +474,4 @@ Copilot SDK의 `@define_tool`로 읽기 전용 상품 카탈로그 조회 도구
 - [Foundry GitHub Copilot SDK sample](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/bring-your-own/invocations/github-copilot)
 - [Agent Framework workflow sample](https://github.com/microsoft-foundry/foundry-samples/tree/main/samples/python/hosted-agents/agent-framework/responses/05-workflows)
 - [Foundry Hosted Agents](https://learn.microsoft.com/azure/ai-foundry/agents/concepts/hosted-agents)
-
+- [Copilot SDK 기반 Claude 대안 검토](docs/copilot-sdk-claude-alternative.md)
